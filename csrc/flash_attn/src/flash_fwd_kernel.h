@@ -15,6 +15,8 @@
 #include "utils.h"
 #include "softmax.h"
 
+#include "alibi.h"
+
 namespace flash {
 
 using namespace cute;
@@ -71,7 +73,7 @@ inline __device__ void write_softmax_to_gmem(
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-template<typename Kernel_traits, bool Is_dropout, bool Is_causal, bool Is_even_MN, bool Is_even_K, bool Return_softmax, typename Params>
+template<typename Kernel_traits, bool Is_dropout, bool Is_causal, bool Is_alibi, bool Is_even_MN, bool Is_even_K, bool Return_softmax, typename Params>
 inline __device__ void compute_attn_1rowblock(const Params &params, const int bidb, const int bidh, const int m_block) {
 
     using Element = typename Kernel_traits::Element;
@@ -394,6 +396,10 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
             cute::cp_async_fence();
         }
 
+        if (Is_alibi) {
+            flash::apply_alibi(scores, n_block * kBlockN, bidh, params.h, params.scale_softmax, params.alibi_slopes);
+        }
+
         // TODO: when we have key_padding_mask we'll need to Check_inf
         masking_step == 0
             ? softmax_rescale_o</*Is_first=*/true,  /*Check_inf=*/Is_causal>(scores, scores_max, scores_sum, acc_o, params.scale_softmax_log2)
@@ -461,6 +467,11 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
 
         // Reshape acc_s from (MMA=4, MMA_M, MMA_N) to (nrow=(2, MMA_M), ncol=(2, MMA_N))
         Tensor scores = make_tensor(acc_s.data(), flash::convert_layout_acc_rowcol(acc_s.layout()));
+
+        if (Is_alibi) {
+            flash::apply_alibi(scores, n_block * kBlockN, bidh, params.h, params.scale_softmax, params.alibi_slopes);
+        }
+        
         softmax_rescale_o</*Is_first=*/false>(scores, scores_max, scores_sum, acc_o, params.scale_softmax_log2);
 
         Tensor rP = flash::convert_type<Element>(scores);
@@ -1106,7 +1117,7 @@ inline __device__ void compute_attn_1rowblock_splitkv(const Params &params, cons
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-template<typename Kernel_traits, bool Is_dropout, bool Is_causal, bool Is_even_MN, bool Is_even_K, bool Return_softmax, typename Params>
+template<typename Kernel_traits, bool Is_dropout, bool Is_causal, bool Is_alibi, bool Is_even_MN, bool Is_even_K, bool Return_softmax, typename Params>
 inline __device__ void compute_attn(const Params &params) {
     const int m_block = blockIdx.x;
     // The block index for the batch.
@@ -1122,7 +1133,7 @@ inline __device__ void compute_attn(const Params &params) {
     // the attention matrix. This way, as long as we have the batch, head, and the location of
     // the 16 x 32 block within the attention matrix, we can generate the exact same dropout pattern.
 
-    flash::compute_attn_1rowblock<Kernel_traits, Is_dropout, Is_causal, Is_even_MN, Is_even_K, Return_softmax>(params, bidb, bidh, m_block);
+    flash::compute_attn_1rowblock<Kernel_traits, Is_dropout, Is_causal, Is_alibi, Is_even_MN, Is_even_K, Return_softmax>(params, bidb, bidh, m_block);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -15,6 +15,8 @@
 #include "utils.h"
 #include "softmax.h"
 
+#include "alibi.h"
+
 namespace flash {
 
 using namespace cute;
@@ -796,6 +798,13 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
                                          AtomLayoutMS * 16);
             }
         }
+
+        if (Is_alibi) {
+            flash::apply_alibi(scores, 
+                               n_block * kBlockN + (tidx / 32 / AtomLayoutMS) * MMA_N_SdP * 16, 
+                               bidh, params.h, params.scale_softmax, params.alibi_slopes);
+        }
+
         // if (cute::thread(32, 0)) { print(scores); }
         // Compute the exponential value.
         flash::scale_apply_exp2</*scale_max=*/false>(scores, lse, params.scale_softmax_log2);
@@ -1341,6 +1350,13 @@ inline __device__ void compute_dq_dk_dv_1rowblock(const Params &params, const in
                                      binfo.actual_seqlen_q,
                                      AtomLayoutMS * 16);
         }
+
+        if (Is_alibi) {
+            flash::apply_alibi(scores, 
+                               n_block * kBlockN + (tidx / 32 / AtomLayoutMS) * MMA_N_SdP * 16, 
+                               bidh, params.h, params.scale_softmax, params.alibi_slopes);
+        }
+
         // Compute the exponential value.
         flash::scale_apply_exp2</*scale_max=*/false>(scores, lse, params.scale_softmax_log2);
         if (Is_dropout) {

@@ -40,7 +40,8 @@ void set_params_fprop(Flash_fwd_params &params,
                       void *softmax_lse_d,
                       float p_dropout,
                       float softmax_scale,
-                      bool is_causal) {
+                      bool is_causal,
+                      void *alibi_slopes) {
 
     // Reset the parameters
     memset(&params, 0, sizeof(params));
@@ -107,6 +108,9 @@ void set_params_fprop(Flash_fwd_params &params,
 
     params.is_causal = is_causal;
     params.is_seqlens_k_cumulative = true;
+
+    params.is_alibi = alibi_slopes != nullptr;
+    params.alibi_slopes = static_cast<float*>(alibi_slopes);
 }
 
 void set_params_dgrad(Flash_bwd_params &params,
@@ -138,7 +142,8 @@ void set_params_dgrad(Flash_bwd_params &params,
                       void *dsoftmax_sum_d,
                       float p_dropout,
                       float softmax_scale,
-                      bool is_causal) {
+                      bool is_causal,
+                      void *alibi_slopes) {
 
     set_params_fprop(params,
                      b, seqlen_q, seqlen_k, seqlen_q_rounded, seqlen_k_rounded, h, h_k, d, d_rounded,
@@ -149,7 +154,8 @@ void set_params_dgrad(Flash_bwd_params &params,
                      softmax_lse_d,
                      p_dropout,
                      softmax_scale,
-                     is_causal);
+                     is_causal,
+                     alibi_slopes);
 
     // Set the pointers and strides.
     params.do_ptr = dout.data_ptr();
@@ -242,6 +248,7 @@ mha_fwd(at::Tensor &q,         // batch_size x seqlen_q x num_heads x head_size
         const float p_dropout,
         const float softmax_scale,
         bool is_causal,
+        c10::optional<at::Tensor> &alibi_slopes,
         const bool return_softmax,
         c10::optional<at::Generator> gen_) {
 
@@ -353,7 +360,8 @@ mha_fwd(at::Tensor &q,         // batch_size x seqlen_q x num_heads x head_size
                      softmax_lse.data_ptr(),
                      p_dropout,
                      softmax_scale,
-                     is_causal);
+                     is_causal,
+                     alibi_slopes.has_value() ? alibi_slopes.value().data_ptr() : nullptr);
 
     // This needs to match with run_mha_fwd_splitkv_dispatch
     const int block_n = head_size <= 64 ? 256 : (head_size <= 128 ? 128 : 64);
@@ -421,6 +429,7 @@ mha_varlen_fwd(const at::Tensor &q,  // total_q x num_heads x head_size, total_q
                const float softmax_scale,
                const bool zero_tensors,
                const bool is_causal,
+               c10::optional<at::Tensor> &alibi_slopes,
                const bool return_softmax,
                c10::optional<at::Generator> gen_) {
 
@@ -534,7 +543,8 @@ mha_varlen_fwd(const at::Tensor &q,  // total_q x num_heads x head_size, total_q
                      softmax_lse.data_ptr(),
                      p_dropout,
                      softmax_scale,
-                     is_causal);
+                     is_causal,
+                     alibi_slopes.has_value() ? alibi_slopes.value().data_ptr() : nullptr);
 
     // number of times random will be generated per thread, to offset philox counter in thc random
     // state
@@ -600,6 +610,7 @@ mha_bwd(const at::Tensor &dout,  // batch_size x seqlen_q x num_heads, x head_si
         const float p_dropout,         // probability to drop
         const float softmax_scale,
         const bool is_causal,
+        c10::optional<at::Tensor> &alibi_slopes,
         c10::optional<at::Generator> gen_,
         c10::optional<at::Tensor> &rng_state) {
     auto dprops = at::cuda::getCurrentDeviceProperties();
@@ -748,7 +759,8 @@ mha_bwd(const at::Tensor &dout,  // batch_size x seqlen_q x num_heads, x head_si
                      softmax_d.data_ptr(),
                      p_dropout,
                      softmax_scale,
-                     is_causal);
+                     is_causal,
+                     alibi_slopes.has_value() ? alibi_slopes.value().data_ptr() : nullptr);
 
     auto launch = &run_mha_bwd;
     // launch(params, stream, /*configure=*/true);
@@ -804,6 +816,7 @@ mha_varlen_bwd(const at::Tensor &dout,  // total_q x num_heads, x head_size
                const float softmax_scale,
                const bool zero_tensors,
                const bool is_causal,
+               c10::optional<at::Tensor> &alibi_slopes,
                c10::optional<at::Generator> gen_,
                c10::optional<at::Tensor> &rng_state
 ) {
@@ -969,7 +982,8 @@ mha_varlen_bwd(const at::Tensor &dout,  // total_q x num_heads, x head_size
                      softmax_d.data_ptr(),
                      p_dropout,
                      softmax_scale,
-                     is_causal);
+                     is_causal,
+                     alibi_slopes.has_value() ? alibi_slopes.value().data_ptr() : nullptr);
 
     auto launch = &run_mha_bwd;
     // launch(params, stream, /*configure=*/true);
@@ -1125,7 +1139,8 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
                      softmax_lse.data_ptr(),
                      /*p_dropout=*/0.f,
                      softmax_scale,
-                     is_causal);
+                     is_causal,
+                     nullptr);
 
     at::Tensor k, v, k_padded, v_padded;
     if (k_.has_value()) {
