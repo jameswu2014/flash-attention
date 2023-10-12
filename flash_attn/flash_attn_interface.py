@@ -928,3 +928,5 @@ def flash_attn_with_kvcache(
         num_splits,
     )
     return out
+
+flash_attn_unpadded_func=flash_attn_varlen_func

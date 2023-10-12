@@ -358,6 +358,9 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
 
         // Reshape acc_s from (MMA=4, MMA_M, MMA_N) to (nrow=(2, MMA_M), ncol=(2, MMA_N))
         Tensor scores = make_tensor(acc_s.data(), flash::convert_layout_acc_rowcol(acc_s.layout()));
+        if (Is_alibi) {
+            flash::apply_alibi(scores, n_block * kBlockN, bidh, params.h, params.scale_softmax, params.alibi_slopes);
+        }
         // if (cute::thread0()) { print(scores); }
         // We don't put the masking before the matmul S = Q K^T because we don't clear sK
         // for rows outside actual_seqlen_k. So those rows could have Inf / NaN, and the matmul
@@ -394,10 +397,6 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
             // This cp_async_fence needs to be in the if block, otherwise the synchronization
             // isn't right and we get race conditions.
             cute::cp_async_fence();
-        }
-
-        if (Is_alibi) {
-            flash::apply_alibi(scores, n_block * kBlockN, bidh, params.h, params.scale_softmax, params.alibi_slopes);
         }
 
         // TODO: when we have key_padding_mask we'll need to Check_inf
