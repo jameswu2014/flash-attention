@@ -359,7 +359,9 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
         // Reshape acc_s from (MMA=4, MMA_M, MMA_N) to (nrow=(2, MMA_M), ncol=(2, MMA_N))
         Tensor scores = make_tensor(acc_s.data(), flash::convert_layout_acc_rowcol(acc_s.layout()));
         if (Is_alibi) {
-            flash::apply_alibi(scores, n_block * kBlockN, bidh, params.h, params.scale_softmax, params.alibi_slopes);
+            flash::apply_alibi(scores, n_block * kBlockN, m_block * kBlockM + (tidx / 32) * 16 + (tidx % 32) / 4,
+                bidh, params.h, params.scale_softmax, params.alibi_slopes,
+                binfo.actual_seqlen_k, binfo.actual_seqlen_q, kNWarps * 16);
         }
         // if (cute::thread0()) { print(scores); }
         // We don't put the masking before the matmul S = Q K^T because we don't clear sK
@@ -468,7 +470,9 @@ inline __device__ void compute_attn_1rowblock(const Params &params, const int bi
         Tensor scores = make_tensor(acc_s.data(), flash::convert_layout_acc_rowcol(acc_s.layout()));
 
         if (Is_alibi) {
-            flash::apply_alibi(scores, n_block * kBlockN, bidh, params.h, params.scale_softmax, params.alibi_slopes);
+            flash::apply_alibi(scores, n_block * kBlockN, m_block * kBlockM + (tidx / 32) * 16 + (tidx % 32) / 4, 
+                bidh, params.h, params.scale_softmax, params.alibi_slopes,
+                binfo.actual_seqlen_k, binfo.actual_seqlen_q,kNWarps * 16);
         }
         
         softmax_rescale_o</*Is_first=*/false>(scores, scores_max, scores_sum, acc_o, params.scale_softmax_log2);

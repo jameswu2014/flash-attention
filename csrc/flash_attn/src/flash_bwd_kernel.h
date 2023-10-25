@@ -775,7 +775,9 @@ inline __device__ void compute_dq_dk_dv_1colblock(const Params &params, const in
         if (Is_alibi) {
             flash::apply_alibi(scores, 
                                n_block * kBlockN + (tidx / 32 / AtomLayoutMS) * MMA_N_SdP * 16, 
-                               bidh, params.h, params.scale_softmax, params.alibi_slopes);
+                               m_block * kBlockM + get<0>(taccScS_row(0)),
+                               bidh, params.h, params.scale_softmax, params.alibi_slopes,
+                               binfo.actual_seqlen_k, binfo.actual_seqlen_q, AtomLayoutMS * 16);
         }
         // if (cute::thread(32, 0)) { print(scores); }
         // TD [2023-07-29]: I was thinking that we don't need to mask out the elements beyond
@@ -1343,7 +1345,9 @@ inline __device__ void compute_dq_dk_dv_1rowblock(const Params &params, const in
         if (Is_alibi) {
             flash::apply_alibi(scores, 
                                n_block * kBlockN + (tidx / 32 / AtomLayoutMS) * MMA_N_SdP * 16, 
-                               bidh, params.h, params.scale_softmax, params.alibi_slopes);
+                               m_block * kBlockM + get<0>(taccScS_row(0)),
+                               bidh, params.h, params.scale_softmax, params.alibi_slopes,
+                               binfo.actual_seqlen_k, binfo.actual_seqlen_q, AtomLayoutMS * 16);
         }
         // We don't need to mask out the elements beyond actual_seqlen_k, because acc_s would
         // be some finite value for those indices. In the end when we multiply with K to get dQ,
